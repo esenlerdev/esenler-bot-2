@@ -1,12 +1,13 @@
 require("dotenv").config();
-require("./api"); // API başlatır
+require("./api");
 
 const {
   Client,
   GatewayIntentBits,
   Partials,
   EmbedBuilder,
-  AuditLogEvent
+  AuditLogEvent,
+  PermissionsBitField
 } = require("discord.js");
 
 const client = new Client({
@@ -75,10 +76,16 @@ client.on("messageUpdate", async (oldMsg, newMsg) => {
 client.on("roleCreate", async (role) => {
   const log = role.guild.channels.cache.get(ROLE_LOG);
 
+  const fetched = await role.guild.fetchAuditLogs({ type: AuditLogEvent.RoleCreate, limit: 1 });
+  const entry = fetched.entries.first();
+
   const embed = new EmbedBuilder()
     .setColor("Green")
     .setTitle("➕ Rol Oluşturuldu")
-    .setDescription(`Rol: ${role}`)
+    .addFields(
+      { name: "Rol", value: role.name },
+      { name: "Oluşturan", value: entry?.executor?.tag || "Bilinmiyor" }
+    )
     .setTimestamp();
 
   log.send({ embeds: [embed] });
@@ -87,13 +94,64 @@ client.on("roleCreate", async (role) => {
 client.on("roleDelete", async (role) => {
   const log = role.guild.channels.cache.get(ROLE_LOG);
 
+  const fetched = await role.guild.fetchAuditLogs({ type: AuditLogEvent.RoleDelete, limit: 1 });
+  const entry = fetched.entries.first();
+
   const embed = new EmbedBuilder()
     .setColor("Red")
     .setTitle("❌ Rol Silindi")
-    .setDescription(`Rol: ${role.name}`)
+    .addFields(
+      { name: "Rol", value: role.name },
+      { name: "Silen", value: entry?.executor?.tag || "Bilinmiyor" }
+    )
     .setTimestamp();
 
   log.send({ embeds: [embed] });
+});
+
+/* ================= ROL İZİN DEĞİŞİM ================= */
+
+client.on("roleUpdate", async (oldRole, newRole) => {
+  const log = newRole.guild.channels.cache.get(ROLE_LOG);
+
+  const oldPerms = oldRole.permissions.toArray();
+  const newPerms = newRole.permissions.toArray();
+
+  const added = newPerms.filter(p => !oldPerms.includes(p));
+  const removed = oldPerms.filter(p => !newPerms.includes(p));
+
+  if (!added.length && !removed.length) return;
+
+  const embed = new EmbedBuilder()
+    .setColor("Blue")
+    .setTitle("🔧 Rol Yetkileri Güncellendi")
+    .addFields(
+      { name: "Rol", value: newRole.name },
+      { name: "Eklenen", value: added.join(", ") || "Yok" },
+      { name: "Kaldırılan", value: removed.join(", ") || "Yok" }
+    )
+    .setTimestamp();
+
+  log.send({ embeds: [embed] });
+});
+
+/* ================= KANAL LOG ================= */
+
+client.on("channelUpdate", async (oldCh, newCh) => {
+  const log = newCh.guild.channels.cache.get(CHANNEL_LOG);
+
+  if (oldCh.name !== newCh.name) {
+    const embed = new EmbedBuilder()
+      .setColor("Yellow")
+      .setTitle("📁 Kanal Güncellendi")
+      .addFields(
+        { name: "Eski", value: oldCh.name },
+        { name: "Yeni", value: newCh.name }
+      )
+      .setTimestamp();
+
+    log.send({ embeds: [embed] });
+  }
 });
 
 /* ================= VOICE LOG ================= */
@@ -102,15 +160,15 @@ client.on("voiceStateUpdate", (oldState, newState) => {
   const log = oldState.guild.channels.cache.get(VOICE_LOG);
 
   if (!oldState.channel && newState.channel) {
-    log.send(`🔊 ${newState.member} sesliye girdi: ${newState.channel.name}`);
+    log.send(`🔊 ${newState.member.user.tag} → ${newState.channel.name}`);
   }
 
   if (oldState.channel && !newState.channel) {
-    log.send(`🔇 ${oldState.member} sesliden çıktı`);
+    log.send(`🔇 ${oldState.member.user.tag} çıktı`);
   }
 
   if (oldState.channel && newState.channel && oldState.channel.id !== newState.channel.id) {
-    log.send(`🔁 ${newState.member} kanal değiştirdi: ${oldState.channel.name} → ${newState.channel.name}`);
+    log.send(`🔁 ${newState.member.user.tag}: ${oldState.channel.name} → ${newState.channel.name}`);
   }
 });
 
@@ -119,10 +177,16 @@ client.on("voiceStateUpdate", (oldState, newState) => {
 client.on("guildBanAdd", async (ban) => {
   const log = ban.guild.channels.cache.get(MOD_LOG);
 
+  const fetched = await ban.guild.fetchAuditLogs({ type: AuditLogEvent.MemberBanAdd, limit: 1 });
+  const entry = fetched.entries.first();
+
   const embed = new EmbedBuilder()
     .setColor("Red")
     .setTitle("🔨 Ban Atıldı")
-    .setDescription(`${ban.user.tag} banlandı`)
+    .addFields(
+      { name: "Kullanıcı", value: ban.user.tag },
+      { name: "Yetkili", value: entry?.executor?.tag || "Bilinmiyor" }
+    )
     .setTimestamp();
 
   log.send({ embeds: [embed] });
@@ -131,15 +195,28 @@ client.on("guildBanAdd", async (ban) => {
 client.on("guildMemberRemove", async (member) => {
   const log = member.guild.channels.cache.get(MOD_LOG);
 
+  const fetched = await member.guild.fetchAuditLogs({ type: AuditLogEvent.MemberKick, limit: 1 });
+  const entry = fetched.entries.first();
+
+  if (!entry) return;
+
   const embed = new EmbedBuilder()
     .setColor("Orange")
     .setTitle("👢 Kick Atıldı")
-    .setDescription(`${member.user.tag} sunucudan atıldı`)
+    .addFields(
+      { name: "Kullanıcı", value: member.user.tag },
+      { name: "Yetkili", value: entry.executor.tag }
+    )
     .setTimestamp();
 
   log.send({ embeds: [embed] });
 });
 
-/* ================= BOT LOGIN ================= */
+/* ================= LOGIN ================= */
+
+if (!process.env.DISCORD_TOKEN) {
+  console.log("❌ TOKEN YOK");
+  process.exit(1);
+}
 
 client.login(process.env.DISCORD_TOKEN);
