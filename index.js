@@ -1,152 +1,145 @@
 require("dotenv").config();
-const { Client, GatewayIntentBits } = require("discord.js");
-const noblox = require("noblox.js");
-const axios = require("axios");
+require("./api"); // API başlatır
+
+const {
+  Client,
+  GatewayIntentBits,
+  Partials,
+  EmbedBuilder,
+  AuditLogEvent
+} = require("discord.js");
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildVoiceStates,
+    GatewayIntentBits.MessageContent
+  ],
+  partials: [Partials.Channel]
 });
 
-const YETKILI_ROL = "1446576536365826138";
-const CEZA_LOG = "1487968797242425444";
-
-client.once("ready", async () => {
-  console.log("✅ Bot aktif!");
-  await noblox.setCookie(process.env.ROBLOX_COOKIE);
-  console.log("✅ Roblox bağlandı!");
+client.once("ready", () => {
+  console.log(`✅ Bot aktif: ${client.user.tag}`);
 });
 
-client.on("interactionCreate", async interaction => {
-  if (!interaction.isChatInputCommand()) return;
+/* ================= LOG KANALLARI ================= */
 
-  const member = interaction.member;
-  const rol = interaction.guild.roles.cache.get(YETKILI_ROL);
+const MESSAGE_LOG = "1487954559425839194";
+const ROLE_LOG = "1487954684764229692";
+const CHANNEL_LOG = "1487955664562163712";
+const VOICE_LOG = "1487967018199027732";
+const MOD_LOG = "1487968797242425444";
 
-  if (!rol || member.roles.highest.position < rol.position) {
-    return interaction.reply({
-      content: "❌ Yetkin yetersiz, Yönetim ekibinde değilsin!",
-      ephemeral: true
-    });
+/* ================= MESAJ LOG ================= */
+
+client.on("messageDelete", async (message) => {
+  if (!message.guild || message.author?.bot) return;
+
+  const log = message.guild.channels.cache.get(MESSAGE_LOG);
+
+  const embed = new EmbedBuilder()
+    .setColor("Red")
+    .setTitle("🗑️ Mesaj Silindi")
+    .addFields(
+      { name: "Kullanıcı", value: `${message.author}`, inline: true },
+      { name: "Kanal", value: `${message.channel}`, inline: true },
+      { name: "Mesaj", value: message.content || "Yok" }
+    )
+    .setTimestamp();
+
+  log.send({ embeds: [embed] });
+});
+
+client.on("messageUpdate", async (oldMsg, newMsg) => {
+  if (!oldMsg.guild || oldMsg.author?.bot) return;
+
+  const log = oldMsg.guild.channels.cache.get(MESSAGE_LOG);
+
+  const embed = new EmbedBuilder()
+    .setColor("Orange")
+    .setTitle("✏️ Mesaj Düzenlendi")
+    .addFields(
+      { name: "Kullanıcı", value: `${oldMsg.author}`, inline: true },
+      { name: "Eski", value: oldMsg.content || "Yok" },
+      { name: "Yeni", value: newMsg.content || "Yok" }
+    )
+    .setTimestamp();
+
+  log.send({ embeds: [embed] });
+});
+
+/* ================= ROL LOG ================= */
+
+client.on("roleCreate", async (role) => {
+  const log = role.guild.channels.cache.get(ROLE_LOG);
+
+  const embed = new EmbedBuilder()
+    .setColor("Green")
+    .setTitle("➕ Rol Oluşturuldu")
+    .setDescription(`Rol: ${role}`)
+    .setTimestamp();
+
+  log.send({ embeds: [embed] });
+});
+
+client.on("roleDelete", async (role) => {
+  const log = role.guild.channels.cache.get(ROLE_LOG);
+
+  const embed = new EmbedBuilder()
+    .setColor("Red")
+    .setTitle("❌ Rol Silindi")
+    .setDescription(`Rol: ${role.name}`)
+    .setTimestamp();
+
+  log.send({ embeds: [embed] });
+});
+
+/* ================= VOICE LOG ================= */
+
+client.on("voiceStateUpdate", (oldState, newState) => {
+  const log = oldState.guild.channels.cache.get(VOICE_LOG);
+
+  if (!oldState.channel && newState.channel) {
+    log.send(`🔊 ${newState.member} sesliye girdi: ${newState.channel.name}`);
   }
 
-  // ================= DC BAN =================
-  if (interaction.commandName === "dcban") {
-    const user = interaction.options.getUser("kullanici");
-    const reason = interaction.options.getString("sebep") || "Belirtilmedi";
-
-    try {
-      await interaction.guild.members.ban(user.id, { reason });
-
-      const log = interaction.guild.channels.cache.get(CEZA_LOG);
-
-      log.send({
-        embeds: [{
-          color: 0xff0000,
-          title: "⛔ Discord Ban",
-          thumbnail: { url: user.displayAvatarURL() },
-          fields: [
-            { name: "👤 Kullanıcı", value: user.tag, inline: true },
-            { name: "🛠️ Yetkili", value: interaction.user.tag, inline: true },
-            { name: "📄 Sebep", value: reason }
-          ],
-          timestamp: new Date()
-        }]
-      });
-
-      interaction.reply({ content: "✅ Discord ban atıldı", ephemeral: true });
-
-    } catch (err) {
-      interaction.reply({ content: "❌ Ban başarısız", ephemeral: true });
-    }
+  if (oldState.channel && !newState.channel) {
+    log.send(`🔇 ${oldState.member} sesliden çıktı`);
   }
 
-  // ================= OYUN BAN =================
-  if (interaction.commandName === "oyunban") {
-    const username = interaction.options.getString("kullanici");
-    const reason = interaction.options.getString("sebep") || "Belirtilmedi";
-
-    try {
-      const userId = await noblox.getIdFromUsername(username);
-
-      await axios.post("http://localhost:3000/ban", {
-        userId,
-        reason
-      });
-
-      const log = interaction.guild.channels.cache.get(CEZA_LOG);
-
-      log.send({
-        embeds: [{
-          color: 0xff9900,
-          title: "🎮 Oyun Ban",
-          fields: [
-            { name: "👤 Kullanıcı", value: username, inline: true },
-            { name: "🛠️ Yetkili", value: interaction.user.tag, inline: true },
-            { name: "📄 Sebep", value: reason }
-          ],
-          timestamp: new Date()
-        }]
-      });
-
-      interaction.reply({
-        content: "✅ Oyuncu oyundan banlandı",
-        ephemeral: true
-      });
-
-    } catch (err) {
-      interaction.reply({
-        content: "❌ Oyun ban başarısız",
-        ephemeral: true
-      });
-    }
-  }
-
-  // ================= TAM BAN =================
-  if (interaction.commandName === "tamban") {
-    const user = interaction.options.getUser("kullanici");
-    const username = interaction.options.getString("roblox");
-    const reason = interaction.options.getString("sebep") || "Belirtilmedi";
-
-    try {
-      // discord ban
-      await interaction.guild.members.ban(user.id, { reason });
-
-      // roblox ban
-      const userId = await noblox.getIdFromUsername(username);
-
-      await axios.post("http://localhost:3000/ban", {
-        userId,
-        reason
-      });
-
-      const log = interaction.guild.channels.cache.get(CEZA_LOG);
-
-      log.send({
-        embeds: [{
-          color: 0x8b0000,
-          title: "💀 TAM BAN",
-          fields: [
-            { name: "💬 Discord", value: user.tag, inline: true },
-            { name: "🎮 Roblox", value: username, inline: true },
-            { name: "🛠️ Yetkili", value: interaction.user.tag },
-            { name: "📄 Sebep", value: reason }
-          ],
-          timestamp: new Date()
-        }]
-      });
-
-      interaction.reply({
-        content: "🔥 Tam ban atıldı (DC + Oyun)",
-        ephemeral: true
-      });
-
-    } catch (err) {
-      interaction.reply({
-        content: "❌ Tam ban başarısız",
-        ephemeral: true
-      });
-    }
+  if (oldState.channel && newState.channel && oldState.channel.id !== newState.channel.id) {
+    log.send(`🔁 ${newState.member} kanal değiştirdi: ${oldState.channel.name} → ${newState.channel.name}`);
   }
 });
+
+/* ================= MOD LOG ================= */
+
+client.on("guildBanAdd", async (ban) => {
+  const log = ban.guild.channels.cache.get(MOD_LOG);
+
+  const embed = new EmbedBuilder()
+    .setColor("Red")
+    .setTitle("🔨 Ban Atıldı")
+    .setDescription(`${ban.user.tag} banlandı`)
+    .setTimestamp();
+
+  log.send({ embeds: [embed] });
+});
+
+client.on("guildMemberRemove", async (member) => {
+  const log = member.guild.channels.cache.get(MOD_LOG);
+
+  const embed = new EmbedBuilder()
+    .setColor("Orange")
+    .setTitle("👢 Kick Atıldı")
+    .setDescription(`${member.user.tag} sunucudan atıldı`)
+    .setTimestamp();
+
+  log.send({ embeds: [embed] });
+});
+
+/* ================= BOT LOGIN ================= */
 
 client.login(process.env.DISCORD_TOKEN);
