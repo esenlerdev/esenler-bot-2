@@ -6,8 +6,7 @@ const {
   GatewayIntentBits,
   Partials,
   EmbedBuilder,
-  AuditLogEvent,
-  PermissionsBitField
+  AuditLogEvent
 } = require("discord.js");
 
 const client = new Client({
@@ -39,6 +38,7 @@ client.on("messageDelete", async (message) => {
   if (!message.guild || message.author?.bot) return;
 
   const log = message.guild.channels.cache.get(MESSAGE_LOG);
+  if (!log) return;
 
   const embed = new EmbedBuilder()
     .setColor("Red")
@@ -57,6 +57,7 @@ client.on("messageUpdate", async (oldMsg, newMsg) => {
   if (!oldMsg.guild || oldMsg.author?.bot) return;
 
   const log = oldMsg.guild.channels.cache.get(MESSAGE_LOG);
+  if (!log) return;
 
   const embed = new EmbedBuilder()
     .setColor("Orange")
@@ -75,6 +76,7 @@ client.on("messageUpdate", async (oldMsg, newMsg) => {
 
 client.on("roleCreate", async (role) => {
   const log = role.guild.channels.cache.get(ROLE_LOG);
+  if (!log) return;
 
   const fetched = await role.guild.fetchAuditLogs({ type: AuditLogEvent.RoleCreate, limit: 1 });
   const entry = fetched.entries.first();
@@ -93,6 +95,7 @@ client.on("roleCreate", async (role) => {
 
 client.on("roleDelete", async (role) => {
   const log = role.guild.channels.cache.get(ROLE_LOG);
+  if (!log) return;
 
   const fetched = await role.guild.fetchAuditLogs({ type: AuditLogEvent.RoleDelete, limit: 1 });
   const entry = fetched.entries.first();
@@ -109,10 +112,11 @@ client.on("roleDelete", async (role) => {
   log.send({ embeds: [embed] });
 });
 
-/* ================= ROL İZİN DEĞİŞİM ================= */
+/* ================= ROL İZİN ================= */
 
 client.on("roleUpdate", async (oldRole, newRole) => {
   const log = newRole.guild.channels.cache.get(ROLE_LOG);
+  if (!log) return;
 
   const oldPerms = oldRole.permissions.toArray();
   const newPerms = newRole.permissions.toArray();
@@ -139,6 +143,7 @@ client.on("roleUpdate", async (oldRole, newRole) => {
 
 client.on("channelUpdate", async (oldCh, newCh) => {
   const log = newCh.guild.channels.cache.get(CHANNEL_LOG);
+  if (!log) return;
 
   if (oldCh.name !== newCh.name) {
     const embed = new EmbedBuilder()
@@ -158,13 +163,14 @@ client.on("channelUpdate", async (oldCh, newCh) => {
 
 client.on("voiceStateUpdate", (oldState, newState) => {
   const log = oldState.guild.channels.cache.get(VOICE_LOG);
+  if (!log) return;
 
   if (!oldState.channel && newState.channel) {
     log.send(`🔊 ${newState.member.user.tag} → ${newState.channel.name}`);
   }
 
   if (oldState.channel && !newState.channel) {
-    log.send(`🔇 ${oldState.member.user.tag} çıktı`);
+    log.send(`🔇 ${newState.member.user.tag} çıktı`);
   }
 
   if (oldState.channel && newState.channel && oldState.channel.id !== newState.channel.id) {
@@ -176,6 +182,7 @@ client.on("voiceStateUpdate", (oldState, newState) => {
 
 client.on("guildBanAdd", async (ban) => {
   const log = ban.guild.channels.cache.get(MOD_LOG);
+  if (!log) return;
 
   const fetched = await ban.guild.fetchAuditLogs({ type: AuditLogEvent.MemberBanAdd, limit: 1 });
   const entry = fetched.entries.first();
@@ -194,6 +201,7 @@ client.on("guildBanAdd", async (ban) => {
 
 client.on("guildMemberRemove", async (member) => {
   const log = member.guild.channels.cache.get(MOD_LOG);
+  if (!log) return;
 
   const fetched = await member.guild.fetchAuditLogs({ type: AuditLogEvent.MemberKick, limit: 1 });
   const entry = fetched.entries.first();
@@ -210,6 +218,49 @@ client.on("guildMemberRemove", async (member) => {
     .setTimestamp();
 
   log.send({ embeds: [embed] });
+});
+
+/* ================= KOMUT SİSTEMİ (FIXLİ) ================= */
+
+client.on("interactionCreate", async (interaction) => {
+  if (!interaction.isChatInputCommand()) return;
+
+  await interaction.deferReply({ ephemeral: true }); // 🔥 timeout fix
+
+  try {
+
+    if (interaction.commandName === "dcban") {
+      const user = interaction.options.getUser("kullanici");
+      const sebep = interaction.options.getString("sebep") || "Sebep yok";
+
+      await interaction.guild.members.ban(user.id, { reason: sebep });
+
+      await interaction.editReply(`🔨 ${user.tag} banlandı\nSebep: ${sebep}`);
+    }
+
+    if (interaction.commandName === "oyunban") {
+      const roblox = interaction.options.getString("kullanici");
+      const sebep = interaction.options.getString("sebep") || "Sebep yok";
+
+      await interaction.editReply(`🎮 ${roblox} oyun banlandı\nSebep: ${sebep}`);
+    }
+
+    if (interaction.commandName === "tamban") {
+      const user = interaction.options.getUser("kullanici");
+      const roblox = interaction.options.getString("roblox");
+      const sebep = interaction.options.getString("sebep") || "Sebep yok";
+
+      await interaction.guild.members.ban(user.id, { reason: sebep });
+
+      await interaction.editReply(
+        `☠️ TAM BAN\n👤 ${user.tag} + 🎮 ${roblox}\nSebep: ${sebep}`
+      );
+    }
+
+  } catch (err) {
+    console.error("HATA:", err);
+    await interaction.editReply("❌ işlem başarısız (yetki veya hata)");
+  }
 });
 
 /* ================= LOGIN ================= */
